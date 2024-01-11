@@ -1,0 +1,385 @@
+const float LOCATIONS[6][2] = {{1,4},{2,4},{3,4},{1.5,3},{2.5,3},{2,2}};
+int coordinates[25][2];
+
+#include "PC_FileIO.c"
+
+// Creates list of coordinates based on file input
+int createCoords(TFileHandle & fin)
+{
+	int MAP_SIZE = 	5;
+	int index = 0;
+	char current;
+	for(int row = 0; row < MAP_SIZE; row++)
+	{
+		for(int col = 0; col < MAP_SIZE; col++)
+		{
+			readCharPC(fin, current);
+			if(current == 'O' || current == 'o')
+			{
+				coordinates[index][0] = col;
+				coordinates[index][1] = 4-row;
+				index++;
+			}
+		}
+	}
+	return index;
+}
+
+// configures sensors
+void configureSensors()
+{
+SensorType[S4] = sensorEV3_Gyro;
+wait1Msec(250);
+SensorMode[S4] = modeEV3Gyro_Calibration;
+wait1Msec(250);
+SensorMode[S4] = modeEV3Gyro_RateAndAngle;
+wait1Msec(250);
+resetGyro(S4);
+wait1Msec(250);
+SensorMode[S2] = modeEV3Color_Color;
+wait1Msec(100);
+}
+
+// adjusts robot while driving to ensure it drives in a straight line
+void adjustRobot(int idealAngle, bool back)
+{
+	int factor = 1;
+
+	// switches factor to -1 if the robot is going backwards to reveres motor power
+	if (back)
+	{
+		factor = -1;
+	}
+
+	// adjusts motor power of left or right motor based on change in gyro degrees
+	// to realign robot on a straight path
+	if(getGyroDegrees(S4)> idealAngle + 1)
+		{
+		motor[motorD] = factor *30 + 5;
+		motor[motorA] = factor *30 - 5;
+		}
+	else if(getGyroDegrees(S4) < idealAngle - 1)
+		{
+		motor[motorA] = factor *30 + 5;
+		motor[motorD] = factor *30 - 5;
+		}
+
+		// if robot is going straight motor powers are set to equal
+	else
+		{
+		motor[motorA] = 30* factor;
+		motor[motorD] = 30* factor;
+		}
+}
+
+// rotates robot a specified angle
+// sets initial angles for the gyro that aren't modified throughout the rest of the program
+void rotateRobot(int angle)
+{
+	if (angle > getGyroDegrees(S4) )
+	{
+		motor[motorA] = 10;
+		motor[motorD] = -10;
+		while (angle - getGyroDegrees(S4) > 0 )
+		{}
+	}
+	else
+	{
+		motor[motorA] = -10;
+		motor[motorD] = 10;
+		while (getGyroDegrees(S4) - angle > 0)
+		{}
+	}
+	motor[motorA] = motor[motorD] = 0;
+}
+
+// drives robot a specific distance based on numlengths
+void drive(float numLengths,int angle)
+{
+	const float SIDE_LENGTH = 10;
+
+	bool backwards = false;
+	const float CM_TO_DEG = 180/(2.75*PI);
+	nMotorEncoder[motorA] = 0;
+
+	// determines whether robot is driving backwards
+	if(numLengths < 0)
+	{
+		backwards = true;
+	}
+	while (abs(nMotorEncoder[motorA])<abs(SIDE_LENGTH*numLengths*CM_TO_DEG))
+	{
+		// uses the adjustrobot function to ensure robot drives straight
+		adjustRobot(angle,backwards);
+	}
+	motor[motorA] = motor[motorD] = 0;
+}
+
+// receives current and future robot location in cartesian coordinates and drives
+// robot from the current coordinate to the future coordinate
+void driveToCoord(float currentX, float currentY, float newX, float newY)
+{
+	float yLengths = 0;
+	float xLengths = 0;
+	yLengths = newY - currentY;
+	xLengths = newX - currentX;
+
+
+	if(xLengths != 0)
+		{
+		// rotates robot so it is facing the x direction
+		rotateRobot(90);
+		wait1Msec(500);
+
+		// rerotates robot so it is facing the x direction to minimize error
+		rotateRobot(90);
+		wait1Msec(250);
+
+		// drives to specified x-coordinate
+		drive(xLengths,90);
+		wait1Msec(250);
+
+		// rotates robot so it is facing the y direction
+		rotateRobot(0);
+
+		wait1Msec(500);
+
+		// rerotates robot so it is facing the y direction to minimize error
+		rotateRobot(0);
+		}
+	wait1Msec(250);
+
+	// drives to specified y-coordinate
+	drive(yLengths,0);
+	wait1Msec(250);
+
+	// rotates robot so it is facing the y direction
+	rotateRobot(0);
+	wait1Msec(500);
+
+	// rerotates robot so it is facing the y direction to minimize error
+	rotateRobot(0);
+}
+
+// ejects a cup
+void Ejectcup()
+{
+	// determines how far robot drives after ejecting
+		const float adjustdistance = 0.50;
+		bool red = false;
+
+		// attempts to eject cup until cup is ejected
+		while (SensorValue[S2] != (5)& red == false)
+		{
+			motor[motorC] = 0;
+			nMotorEncoder[motorB] = 0;
+
+			//rotates  cup holding to gears to allow one cup to be dispensed
+			motor[motorB] = -20;
+			while ((abs(nMotorEncoder[motorB]) < 105))
+			{}
+			motor[motorB] = 0;
+			wait1Msec(100);
+
+			// spins wheel to grip cup and eject it onto the ground for 5.5 seconds
+			motor[motorC] = 100;
+			clearTimer(T1);
+			while (time1[T1] < 5500)
+			{
+				// determines if cup was ejected
+				if (SensorValue[S2] == 5)
+				{
+					// if cup was ejected stops spinning wheel
+					motor[motorC] = 0;
+					red = true;
+				}
+			}
+		}
+		// robot drives forward and reverses specified distance
+		drive(adjustdistance,0);
+		wait1Msec(100);
+		drive(-adjustdistance,0);
+}
+
+// allows user to input a custom cup layout
+int customlayout()
+{
+	int numcups = 0;
+
+	// goes through 5 rows of a 5 by 5 grid with count representing the row number
+	for (int count = 4; count >= 0; count --)
+	{
+		// displays instructions
+		int col = 0;
+		displayString (1, "                             ");
+		displayString (1, "  IS CURRENT ROW #");
+		displayString (1, "%d", count);
+		displayString (2, "                             ");
+		displayString (2, "CLICK DOWN TO GO DOWN A ROW");
+		displayString (3, "R ARROW TO GO TO NEXT COL");
+		displayString (4, "   IS CURRENT COL #");
+		displayString (4, "%d",col);
+		displayString (5, "                             ");
+		displayString (5, "CLICK ENTER WHEN CUP IS");
+		displayString (6, "                             ");
+		displayString (6, "IN CORRECT SPOT");
+		displayString (7, "                            ");
+		displayString (7, "MAX 6 CUPS.                  ");
+		wait1Msec(1000);
+
+		// waits for user to indicate they want to progress to the next row
+		while (!getButtonPress(buttonDown))
+			{
+			displayString (4, " IS CURRENT COL #");
+			displayString (4, "%d", col);
+
+			// if right button is pressed progress to the next column
+			if (getButtonPress(buttonRight))
+			{
+				// limits user to 5 columns
+				if (col < 5)
+					col ++;
+				while(getButtonPress(buttonRight))
+				{}
+			}
+
+			// if enter button is pressed insert current cup coordinates into list
+			if (getButtonPress(buttonEnter))
+				{
+				while(getButtonPress(buttonEnter))
+				{}
+				coordinates[numcups][0] = col;
+				coordinates[numcups][1] = count;
+				numcups ++;
+
+				// prevents user from placing more than one cup in the same spot
+				col ++;
+
+				// prevents user from placing more than 6 cups
+				if (numcups == 6)
+				{
+					break;
+				}
+				}
+			}
+		// ends function if 6 cups have been placed
+		if (numcups == 6)
+			count = -1;
+		}
+	return numcups;
+}
+
+// lets user choose what cup layout ption they want
+int menu()
+{
+	// displays instructions
+	displayString (2, "DEFAULT LAYOUT PRESS ENTER");
+	displayString (4, "J LAYOUT PRESS UP");
+	displayString (5, "DIAMOND LAYOUT PRESS RIGHT");
+	displayString (6, "X LAYOUT PRESS DOWN");
+	displayString (7, "CUSTOM LAYOUT PRESS LEFT");
+	while (!getButtonPress(buttonAny))
+	{}
+	if (getButtonPress(buttonEnter))
+	{
+			return 0;
+	}
+	if (getButtonPress(buttonUp))
+		return -1;
+	if (getButtonPress(buttonRight))
+		return -2;
+	if (getButtonPress(buttonDown))
+		return -3;
+	if (getButtonPress(buttonLeft))
+		return customlayout();
+	return -5;
+}
+
+task main()
+{
+	int file = menu();
+	wait1Msec(5000);
+	configureSensors();
+	float yCoord = 0;
+	float xCoord = 0;
+	int num_locations = 6;
+
+	// clears screen
+	displayString (1, "                             ");
+	displayString (2, "                             ");
+	displayString (3, "                             ");
+	displayString (4, "                             ");
+	displayString (5, "                             ");
+	displayString (6, "                             ");
+	displayString (7, "                             ");
+	wait1Msec(1000);
+
+	// if enter button was pressed dispenses cups in basic layout
+	if (file == 0)
+		{
+		for(int count = 0; count < num_locations; count++)
+			{
+				driveToCoord(xCoord,yCoord,LOCATIONS[count][0],LOCATIONS[count][1]);
+				Ejectcup();
+				xCoord = LOCATIONS[count][0];
+				yCoord = LOCATIONS[count][1];
+				driveToCoord(xCoord,yCoord,xCoord,yCoord-1);
+				yCoord -= 1;
+			}
+		}
+	// if one of the files was selected determines which file was selected and opens that file
+	else if (file < 0)
+		{
+		TFileHandle fin;
+		if (file == -1)
+			bool fileOkay = openReadPC(fin, "J.txt");
+		if (file == -2)
+			fileOkay = openReadPC(fin, "Diamond.txt");
+		if (file == -3)
+			fileOkay = openReadPC(fin, "X.txt");
+		if (!fileOkay)
+		{
+			displayString(0,"Outfile error");
+			wait1Msec (5000);
+		}
+		else
+			{
+			// creates coordinates for robot to place cups
+			num_locations = createCoords(fin);
+
+			// robot places cups in designated coordinates from file
+			for(int count = 0; count < num_locations; count++)
+				{
+					driveToCoord(xCoord,yCoord,coordinates[count][0], coordinates[count][1]);
+					Ejectcup();
+					xCoord = coordinates[count][0];
+					yCoord = coordinates[count][1];
+					driveToCoord(xCoord,yCoord,xCoord,yCoord-1);
+					yCoord -= 1;
+				}
+			}
+		closeFilePC(fin);
+	}
+	// if custom layout was selected
+	else
+		{
+		// robot places cups at designated coordinates inputted by user
+		for(int count = 0; count < file; count++)
+				{
+					// robot drives from current position to future position
+					driveToCoord(xCoord,yCoord,coordinates[count][0], coordinates[count][1]);
+					Ejectcup();
+
+					// sets current coordinate of robot to its current position
+					xCoord = coordinates[count][0];
+					yCoord = coordinates[count][1];
+
+					// robot reverses one coordinate in the y direction to avoid hitting cups when turning
+					driveToCoord(xCoord,yCoord,xCoord,yCoord-1);
+					yCoord -= 1;
+				}
+		}
+	displayString (4, "PROGRAM COMPLETED");
+	displayString (5, "        :)");
+	wait1Msec(10000);
+}
